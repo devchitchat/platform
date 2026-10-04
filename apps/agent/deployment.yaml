@@ -1,0 +1,220 @@
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: agent
+  namespace: agent
+---
+# The CR instances (ContactFormSubmission, DiscoveryCallRequest) live in the
+# apps namespace; this Role and RoleBinding cross-namespace-bind the agent
+# ServiceAccount (in agent ns) to watch them there.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: contact-form-submission-watcher
+  namespace: apps
+rules:
+- apiGroups: ["fieldmappings.com"]
+  resources: ["contactformsubmissions"]
+  verbs: ["list", "watch"]
+- apiGroups: ["fieldmappings.com"]
+  resources: ["contactformsubmissions/status"]
+  verbs: ["patch", "update"]
+- apiGroups: ["joeyguerra.com"]
+  resources: ["discoverycallrequests"]
+  verbs: ["list", "watch"]
+- apiGroups: ["joeyguerra.com"]
+  resources: ["discoverycallrequests/status"]
+  verbs: ["patch", "update"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: agent-contact-form-submission-watcher
+  namespace: apps
+subjects:
+- kind: ServiceAccount
+  name: agent
+  namespace: agent
+roleRef:
+  kind: Role
+  name: contact-form-submission-watcher
+  apiGroup: rbac.authorization.k8s.io
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: agent-claude-creds
+  namespace: agent
+spec:
+  accessModes: [ReadWriteOnce]
+  storageClassName: local-path
+  volumeName: pvc-5b280e41-0dea-4ec8-8b23-46d47ee3a949
+  resources:
+    requests:
+      storage: 100Mi
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: agent-mesh-data
+  namespace: agent
+spec:
+  accessModes: [ReadWriteOnce]
+  storageClassName: local-path
+  volumeName: pvc-c7b64445-ecfa-4fc5-8e6a-220219efcee3
+  resources:
+    requests:
+      storage: 2Gi
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: agent-workspace
+  namespace: agent
+spec:
+  accessModes: [ReadWriteOnce]
+  storageClassName: local-path
+  volumeName: pvc-da09370b-3135-4fce-a47c-c1b3fa8bc1de
+  resources:
+    requests:
+      storage: 10Gi
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: agent-config
+  namespace: agent
+data:
+  GIT_USER_NAME: "agent"
+  GIT_USER_EMAIL: "agent@joeyguerra.com"
+  PREVIEW_TEMPLATE_REPO: "hello-world-index97"
+  MESH_NODE_NAME: "agent"
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: agent
+  namespace: agent
+spec:
+  strategy:
+    type: Recreate
+  replicas: 1
+  selector:
+    matchLabels:
+      app: agent
+  template:
+    metadata:
+      labels:
+        app: agent
+    spec:
+      serviceAccountName: agent
+      securityContext:
+        fsGroup: 1001
+        fsGroupChangePolicy: OnRootMismatch
+      hostAliases:
+      - ip: "192.168.5.2"
+        hostnames:
+        - "host.lima.internal"
+      containers:
+      - name: agent
+        # image tag is updated by CI: registry.local:5000/agent@sha256:e6550f94bf21725d292d2b0610d1b6579ac3f2d575b706ef3e0a6447c787575d
+        image: registry.local:5000/agent@sha256:e6550f94bf21725d292d2b0610d1b6579ac3f2d575b706ef3e0a6447c787575d
+        imagePullPolicy: Always
+        securityContext:
+          runAsNonRoot: true
+          runAsUser: 1001
+          allowPrivilegeEscalation: false
+          capabilities:
+            drop: ["ALL"]
+          seccompProfile:
+            type: RuntimeDefault
+        env:
+        - name: SOCIAL_GATE_URL
+          value: http://social-gate-api.social-gate.svc.cluster.local:8080
+        envFrom:
+        - secretRef:
+            name: agent-bot
+            optional: true
+        - configMapRef:
+            name: agent-config
+        ports:
+        - containerPort: 8080
+          name: preview
+        volumeMounts:
+        - name: claude-creds
+          mountPath: /home/claude/.claude
+        - name: workspace
+          mountPath: /workspace
+        - name: social-gate-token
+          mountPath: /var/run/secrets/social-gate
+          readOnly: true
+        resources:
+          requests:
+            cpu: 100m
+            memory: 256Mi
+          limits:
+            memory: 2Gi
+      - name: mesh
+        # image tag is updated by CI: registry.local:5000/mesh-agent@sha256:093144573f770eec72a0b28c1d2b182ef3bc57d97f88bda212f2fe8316c7249e
+        # NOTE: this mesh node is intentionally NOT peered with ci-runner or the
+        # gitops controller — it serves only the agent's own preview/website repos.
+        image: registry.local:5000/mesh-agent@sha256:093144573f770eec72a0b28c1d2b182ef3bc57d97f88bda212f2fe8316c7249e
+        imagePullPolicy: Always
+        securityContext:
+          runAsNonRoot: true
+          runAsUser: 1001
+          allowPrivilegeEscalation: false
+          capabilities:
+            drop: ["ALL"]
+          seccompProfile:
+            type: RuntimeDefault
+        envFrom:
+        - configMapRef:
+            name: agent-config
+        ports:
+        - containerPort: 7979
+          name: mesh
+        volumeMounts:
+        - name: mesh-data
+          mountPath: /home/mesh/.mesh
+        resources:
+          requests:
+            cpu: 50m
+            memory: 64Mi
+          limits:
+            memory: 256Mi
+      volumes:
+      - name: claude-creds
+        persistentVolumeClaim:
+          claimName: agent-claude-creds
+      - name: mesh-data
+        persistentVolumeClaim:
+          claimName: agent-mesh-data
+      - name: workspace
+        persistentVolumeClaim:
+          claimName: agent-workspace
+      - name: social-gate-token
+        projected:
+          sources:
+          - serviceAccountToken:
+              audience: social-gate
+              expirationSeconds: 3600
+              path: token
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: agent-service
+  namespace: agent
+spec:
+  type: NodePort
+  selector:
+    app: agent
+  ports:
+  - port: 7979
+    targetPort: 7979
+    nodePort: 30797
+    name: mesh
+  - port: 8080
+    targetPort: 8080
+    name: preview
