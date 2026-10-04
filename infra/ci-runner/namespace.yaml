@@ -1,0 +1,9 @@
+# Separate namespace so the privileged dockerd sidecar is allowed.
+# The default namespace enforces the baseline PodSecurity policy which
+# blocks privileged containers. The ci namespace uses privileged.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: ci
+  labels:
+    pod-security.kubernetes.io/enforce: privileged

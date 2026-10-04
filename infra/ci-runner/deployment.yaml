@@ -1,0 +1,246 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: buildkitd-config
+  namespace: ci
+data:
+  buildkitd.toml: |
+    [worker.oci]
+      enabled = true
+
+    # Allow pushing to the registry-proxy and the upstream registry over plain HTTP
+    [registry."localhost:5050"]
+      http = true
+      insecure = true
+
+    [registry."registry.mesh-system.svc.cluster.local:5000"]
+      http = true
+      insecure = true
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: mesh-ci-runner-mesh-data
+  namespace: ci
+spec:
+  accessModes: [ReadWriteOnce]
+  storageClassName: local-path
+  resources:
+    requests:
+      storage: 2Gi
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: mesh-ci-runner-docker-data
+  namespace: ci
+spec:
+  accessModes: [ReadWriteOnce]
+  storageClassName: local-path
+  resources:
+    requests:
+      storage: 20Gi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: mesh-ci-runner
+  namespace: ci
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: mesh-ci-runner
+  template:
+    metadata:
+      labels:
+        app: mesh-ci-runner
+    spec:
+      initContainers:
+        - name: gen-buildkit-certs
+          # Generates a short-lived CA and mTLS cert pair at pod startup.
+          # buildkitd uses the server cert; the mesh container (CI runner) uses
+          # the client cert. The CA key is deleted after signing so it can't be
+          # reused to mint new certs from within the pod.
+          image: alpine:3
+          command: ["/bin/sh", "-c"]
+          args:
+            - |
+              set -e
+              apk add --no-cache openssl > /dev/null 2>&1
+              # CA
+              openssl genrsa -out /certs/ca-key.pem 2048
+              openssl req -new -x509 -sha256 -key /certs/ca-key.pem -out /certs/ca.pem \
+                -days 3650 -subj "/CN=buildkit-ca"
+              # Server cert (SAN: 127.0.0.1 + localhost)
+              openssl genrsa -out /certs/server-key.pem 2048
+              openssl req -new -sha256 -key /certs/server-key.pem -out /tmp/server.csr \
+                -subj "/CN=buildkitd"
+              printf "subjectAltName=IP:127.0.0.1,DNS:localhost\n" > /tmp/server-ext.cnf
+              openssl x509 -req -sha256 -in /tmp/server.csr -CA /certs/ca.pem \
+                -CAkey /certs/ca-key.pem -CAcreateserial -out /certs/server.pem \
+                -days 3650 -extfile /tmp/server-ext.cnf
+              # Client cert
+              openssl genrsa -out /certs/client-key.pem 2048
+              openssl req -new -sha256 -key /certs/client-key.pem -out /tmp/client.csr \
+                -subj "/CN=buildkit-client"
+              openssl x509 -req -sha256 -in /tmp/client.csr -CA /certs/ca.pem \
+                -CAkey /certs/ca-key.pem -CAcreateserial -out /certs/client.pem -days 3650
+              # Remove CA key — it can't be used to mint new certs once deleted
+              rm /certs/ca-key.pem
+              # server-key: readable only by root (buildkitd)
+              chmod 0400 /certs/server-key.pem
+              # client-key: readable only by mesh user (uid 1001)
+              chown 1001 /certs/client-key.pem
+              chmod 0400 /certs/client-key.pem
+              # public certs: world-readable
+              chmod 0444 /certs/ca.pem /certs/server.pem /certs/client.pem
+          volumeMounts:
+            - name: buildkit-certs
+              mountPath: /certs
+
+      containers:
+        - name: mesh
+          # mesh daemon with CI enabled + bun + docker CLI
+          # Built from local-k8s/cicd/mesh-ci-runner/Dockerfile
+          image: registry.local:5000/mesh-ci-runner:latest
+          imagePullPolicy: Always
+          envFrom:
+            - secretRef:
+                name: mesh-peer-config
+          env:
+            - name: MESH_NODE_NAME
+              value: mesh-ci-runner
+            # BuildKit daemon from the buildkitd sidecar — replaces DOCKER_HOST.
+            # Pipelines use "docker buildx build --push" which goes through BuildKit.
+            - name: BUILDKIT_HOST
+              value: tcp://localhost:1234
+            # Push goes through the registry-proxy sidecar (localhost:5050).
+            - name: REGISTRY_HOST
+              value: localhost:5050
+            # gitops repo replicated to this pod's mesh daemon via P2P peering
+            - name: GITOPS_REPO_URL
+              value: https://localhost:7979/mesh-gitops.git
+          volumeMounts:
+            - name: mesh-data
+              mountPath: /home/mesh/.mesh
+            - name: buildkit-certs
+              mountPath: /certs
+              readOnly: true
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+            limits:
+              memory: 1Gi
+
+        - name: registry-proxy
+          # Push-scoping proxy: enforces that each pipeline can only push images
+          # matching its repo name. The watchdog sidecar calls /control/session;
+          # the pipeline never holds the token and cannot escalate its allowed image set.
+          # Built from local-k8s/cicd/registry-proxy/Dockerfile
+          image: registry.local:5000/registry-proxy:latest
+          imagePullPolicy: Always
+          env:
+            - name: REGISTRY_UPSTREAM
+              value: http://registry.mesh-system.svc.cluster.local:5000
+            - name: PROXY_PORT
+              value: "5050"
+            - name: CONTROL_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: registry-proxy-control-token
+                  key: token
+          ports:
+            - containerPort: 5050
+          resources:
+            requests:
+              cpu: 10m
+              memory: 32Mi
+            limits:
+              memory: 64Mi
+
+        - name: registry-proxy-watchdog
+          # Polls "mesh ci status" and calls the proxy /control/session API to
+          # register which repo is currently building. Holds the control token;
+          # pipeline scripts never receive it (not in env_passthrough).
+          # Built from local-k8s/cicd/registry-proxy-watchdog/Dockerfile
+          image: registry.local:5000/registry-proxy-watchdog:latest
+          imagePullPolicy: Always
+          env:
+            - name: PROXY_URL
+              value: http://localhost:5050
+            - name: MESH_NODE_NAME
+              value: mesh-ci-runner
+            - name: CONTROL_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: registry-proxy-control-token
+                  key: token
+          volumeMounts:
+            - name: mesh-data
+              mountPath: /home/mesh/.mesh
+              readOnly: true
+          resources:
+            requests:
+              cpu: 10m
+              memory: 32Mi
+            limits:
+              memory: 64Mi
+
+        - name: buildkitd
+          # Standard BuildKit (root uid) — privileged: true is NOT set.
+          # SYS_ADMIN + seccompProfile:Unconfined gives BuildKit the mount
+          # permissions it needs without opening the full privileged attack surface.
+          # moby/buildkit:rootless fails in k3s/containerd because rootlesskit
+          # cannot make the container root mount private (a containerd constraint).
+          image: moby/buildkit:latest
+          securityContext:
+            seccompProfile:
+              type: Unconfined
+            capabilities:
+              add:
+                - SYS_ADMIN
+          args:
+            - --addr
+            - tcp://localhost:1234
+            - --config
+            - /etc/buildkit/buildkitd.toml
+            - --tlscacert
+            - /certs/ca.pem
+            - --tlscert
+            - /certs/server.pem
+            - --tlskey
+            - /certs/server-key.pem
+          ports:
+            - containerPort: 1234
+          volumeMounts:
+            - name: buildkit-cache
+              mountPath: /home/user/.local/share/buildkit
+            - name: buildkit-config
+              mountPath: /etc/buildkit
+              readOnly: true
+            - name: buildkit-certs
+              mountPath: /certs
+              readOnly: true
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+            limits:
+              memory: 1Gi
+
+      volumes:
+        - name: mesh-data
+          persistentVolumeClaim:
+            claimName: mesh-ci-runner-mesh-data
+        - name: buildkit-cache
+          persistentVolumeClaim:
+            claimName: mesh-ci-runner-docker-data
+        - name: buildkit-config
+          configMap:
+            name: buildkitd-config
+        - name: buildkit-certs
+          emptyDir: {}

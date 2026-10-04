@@ -1,0 +1,68 @@
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: apps-controller
+  namespace: mesh-system
+---
+# Namespaced Role: only what's needed to deploy apps in the apps namespace.
+# No cluster-level resources, no secrets, no RBAC management.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: apps-controller
+  namespace: apps
+rules:
+  - apiGroups: ["apps"]
+    resources: ["deployments"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  - apiGroups: [""]
+    resources:
+      - services
+      - configmaps
+      - persistentvolumeclaims
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  - apiGroups: ["networking.k8s.io"]
+    resources: ["ingresses"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  - apiGroups: ["batch"]
+    resources: ["cronjobs"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: apps-controller
+  namespace: apps
+subjects:
+  - kind: ServiceAccount
+    name: apps-controller
+    namespace: mesh-system
+roleRef:
+  kind: Role
+  name: apps-controller
+  apiGroup: rbac.authorization.k8s.io
+---
+# The apps-controller also needs to read/write its state ConfigMap in mesh-system.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: apps-controller-state
+  namespace: mesh-system
+rules:
+  - apiGroups: [""]
+    resources: ["configmaps"]
+    verbs: ["get", "list", "watch", "create", "update", "patch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: apps-controller-state
+  namespace: mesh-system
+subjects:
+  - kind: ServiceAccount
+    name: apps-controller
+    namespace: mesh-system
+roleRef:
+  kind: Role
+  name: apps-controller-state
+  apiGroup: rbac.authorization.k8s.io

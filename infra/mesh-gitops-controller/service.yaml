@@ -1,0 +1,13 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: mesh-gitops-controller
+  namespace: mesh-system
+spec:
+  type: ClusterIP
+  selector:
+    app: mesh-gitops-controller
+  ports:
+  - port: 7979
+    targetPort: 7979
+    name: mesh

@@ -1,0 +1,92 @@
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: apps-controller-mesh-data
+  namespace: mesh-system
+spec:
+  accessModes: [ReadWriteOnce]
+  storageClassName: local-path
+  resources:
+    requests:
+      storage: 2Gi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: apps-controller
+  namespace: mesh-system
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: apps-controller
+  template:
+    metadata:
+      labels:
+        app: apps-controller
+    spec:
+      serviceAccountName: apps-controller
+      containers:
+        - name: controller
+          image: registry.local:5000/mesh-gitops-controller:latest
+          imagePullPolicy: Always
+          env:
+            # mesh sidecar serves mesh-gitops over HTTPS at localhost:7979
+            - name: GITOPS_REPO_URL
+              value: https://localhost:7979/mesh-gitops.git
+            - name: GITOPS_REPO_BRANCH
+              value: main
+            # Only the apps/ directory — infra and crds are managed by platform-controller
+            - name: GITOPS_WATCH_DIRS
+              value: "apps"
+            - name: GITOPS_REPO_DIR
+              value: /tmp/mesh-gitops
+            - name: POLL_INTERVAL_MS
+              value: "30000"
+            - name: CONFIGMAP_NAME
+              value: apps-controller-state
+            - name: STATE_NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              memory: 128Mi
+
+        - name: mesh
+          image: registry.local:5000/mesh-agent:latest
+          imagePullPolicy: Always
+          env:
+            - name: MESH_NODE_NAME
+              value: apps-controller
+          ports:
+            - containerPort: 7979
+          volumeMounts:
+            - name: mesh-data
+              mountPath: /home/mesh/.mesh
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              memory: 128Mi
+
+      volumes:
+        - name: mesh-data
+          persistentVolumeClaim:
+            claimName: apps-controller-mesh-data
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: apps-controller
+  namespace: mesh-system
+spec:
+  selector:
+    app: apps-controller
+  ports:
+    - port: 7979
+      targetPort: 7979

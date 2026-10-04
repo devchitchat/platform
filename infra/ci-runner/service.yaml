@@ -1,0 +1,13 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: mesh-ci-runner
+  namespace: ci
+spec:
+  type: ClusterIP
+  selector:
+    app: mesh-ci-runner
+  ports:
+    - name: mesh
+      port: 7979
+      targetPort: 7979
