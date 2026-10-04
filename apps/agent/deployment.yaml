@@ -89,6 +89,9 @@ data:
   GIT_USER_EMAIL: "agent@joeyguerra.com"
   PREVIEW_TEMPLATE_REPO: "hello-world-index97"
   MESH_NODE_NAME: "agent"
+  DEVCHITCHAT_TLS_REJECT_UNAUTH: "true"
+  DEVCHITCHAT_WS_URL: "ws://chat-web-service.apps.svc.cluster.local:8080/ws"
+  K8S_EVENTS_NAMESPACE: "apps"
 ---
 apiVersion: apps/v1
 kind: Deployment
