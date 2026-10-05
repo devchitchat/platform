@@ -30,6 +30,14 @@ spec:
         - name: controller
           image: registry.local:5000/mesh-gitops-controller:latest
           imagePullPolicy: Always
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 1000
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+            seccompProfile:
+              type: RuntimeDefault
           env:
             # mesh sidecar serves the gitops repo over HTTPS at localhost:7979
             # mesh sidecar serves the platform repo over HTTPS at localhost:7979
@@ -57,6 +65,14 @@ spec:
           # mesh-node: P2P git daemon, CI disabled (this pod is not a runner)
           # Built from devchitchat/agent/Dockerfile.agent-mesh
           image: registry.local:5000/mesh-node:latest
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 1001
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+            seccompProfile:
+              type: RuntimeDefault
           env:
             - name: MESH_NODE_NAME
               value: mesh-gitops-controller

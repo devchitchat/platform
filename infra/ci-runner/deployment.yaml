@@ -90,7 +90,8 @@ spec:
                 -CAkey /certs/ca-key.pem -CAcreateserial -out /certs/client.pem -days 3650
               # Remove CA key — it can't be used to mint new certs once deleted
               rm /certs/ca-key.pem
-              # server-key: readable only by root (buildkitd)
+              # server-key: readable only by buildkitd (uid 1000, rootless image)
+              chown 1000 /certs/server-key.pem
               chmod 0400 /certs/server-key.pem
               # client-key: readable only by mesh user (uid 1001)
               chown 1001 /certs/client-key.pem
@@ -107,6 +108,14 @@ spec:
           # Built from local-k8s/cicd/mesh-ci-runner/Dockerfile
           image: registry.local:5000/mesh-ci-runner:latest
           imagePullPolicy: Always
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 1001
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+            seccompProfile:
+              type: RuntimeDefault
           envFrom:
             - secretRef:
                 name: mesh-peer-config
@@ -144,6 +153,14 @@ spec:
           # Built from local-k8s/cicd/registry-proxy/Dockerfile
           image: registry.local:5000/registry-proxy:latest
           imagePullPolicy: Always
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 1000
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+            seccompProfile:
+              type: RuntimeDefault
           env:
             - name: REGISTRY_UPSTREAM
               value: http://registry.mesh-system.svc.cluster.local:5000
@@ -168,19 +185,32 @@ spec:
               memory: 64Mi
 
         - name: buildkitd
-          # Standard BuildKit (root uid) — privileged: true required.
-          # SYS_ADMIN + seccompProfile:Unconfined is insufficient on k3s/containerd:
-          # bind mounts from the runc-native snapshot store fail with permission denied
-          # even with SYS_ADMIN. moby/buildkit:rootless also fails here because
-          # rootlesskit cannot make the container root mount private.
-          image: moby/buildkit:latest
+          # Rootless BuildKit — no privileged: true.
+          # Requires the buildkitd-rootless AppArmor profile on the node
+          # (allows userns; see annotation on pod template) and seccomp: Unconfined
+          # so rootlesskit can make the necessary mount syscalls.
+          # --oci-worker-no-process-sandbox stops buildkitd from trying to apply
+          # its own seccomp/apparmor profiles to child build processes (not allowed
+          # from inside a rootless container).
+          image: moby/buildkit:rootless
           securityContext:
-            privileged: true
+            runAsUser: 1000
+            runAsNonRoot: true
+            seccompProfile:
+              type: Unconfined
+            # Allow rootlesskit to create user namespaces.
+            # kernel.apparmor_restrict_unprivileged_userns=1 on Ubuntu 24.04 blocks
+            # this without a profile; flags=(unconfined) keeps the profile minimal —
+            # it only grants the userns permission, nothing else.
+            appArmorProfile:
+              type: Localhost
+              localhostProfile: buildkitd-rootless
           args:
             - --addr
             - tcp://localhost:1234
             - --config
             - /etc/buildkit/buildkitd.toml
+            - --oci-worker-no-process-sandbox
             - --tlscacert
             - /certs/ca.pem
             - --tlscert

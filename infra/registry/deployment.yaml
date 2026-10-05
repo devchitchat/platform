@@ -28,6 +28,12 @@ spec:
       containers:
         - name: registry
           image: registry:2
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+            seccompProfile:
+              type: RuntimeDefault
           ports:
             - containerPort: 5000
           volumeMounts:
@@ -42,6 +48,12 @@ spec:
 
         - name: gc
           image: registry:2
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+            seccompProfile:
+              type: RuntimeDefault
           command:
             - /bin/sh
             - -c

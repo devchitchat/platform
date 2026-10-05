@@ -30,6 +30,14 @@ spec:
         - name: controller
           image: registry.local:5000/mesh-gitops-controller:latest
           imagePullPolicy: Always
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 1000
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+            seccompProfile:
+              type: RuntimeDefault
           env:
             # mesh sidecar serves mesh-gitops over HTTPS at localhost:7979
             - name: GITOPS_REPO_URL
@@ -59,6 +67,14 @@ spec:
         - name: mesh
           image: registry.local:5000/mesh-node:latest
           imagePullPolicy: Always
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 1001
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+            seccompProfile:
+              type: RuntimeDefault
           env:
             - name: MESH_NODE_NAME
               value: apps-controller
