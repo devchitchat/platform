@@ -1,0 +1,205 @@
+# social-gate: holds social platform tokens in its own namespace so the agent
+# pod never sees them. Secrets are NOT in this file — see README "Secrets".
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: social-gate
+  labels:
+    pod-security.kubernetes.io/enforce: restricted
+    pod-security.kubernetes.io/enforce-version: latest
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: social-gate
+  namespace: social-gate
+---
+# Lets social-gate call the TokenReview API to verify the agent's projected token.
+# It grants no access to secrets or any other resources.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: social-gate-auth-delegator
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: system:auth-delegator
+subjects:
+  - kind: ServiceAccount
+    name: social-gate
+    namespace: social-gate
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: social-gate-data
+  namespace: social-gate
+spec:
+  accessModes: ["ReadWriteOnce"]
+  storageClassName: local-path
+  resources:
+    requests:
+      storage: 256Mi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: social-gate
+  namespace: social-gate
+spec:
+  replicas: 1 # single writer to the JSON store on the PVC
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: social-gate
+  template:
+    metadata:
+      labels:
+        app: social-gate
+    spec:
+      serviceAccountName: social-gate
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        runAsGroup: 65532
+        fsGroup: 65532
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: social-gate
+          # image digest is updated by deploy.sh
+          image: registry.local:5000/social-gate@sha256:663a7e85d8192a05e774e450f1fe6a467801e0411a8dbe25a9423ecaa0a87135
+          imagePullPolicy: Always
+          env:
+            - name: PUBLIC_URL
+              value: "https://social-gate.joeyguerra.com"
+            - name: ALLOWED_CALLERS
+              value: "system:serviceaccount:default:agent"
+            - name: TOKEN_AUDIENCE
+              value: "social-gate"
+            - name: LINK_DOMAINS
+              value: "fieldmappings.com,joeyguerra.com"
+            - name: DATA_DIR
+              value: /data
+          envFrom:
+            - secretRef:
+                name: social-gate-secrets # GATE_MASTER_KEY, ADMIN_PASSWORD, META_APP_ID, META_APP_SECRET
+          ports:
+            - name: api
+              containerPort: 8080
+            - name: admin
+              containerPort: 8081
+          readinessProbe:
+            httpGet: { path: /healthz, port: api }
+          livenessProbe:
+            httpGet: { path: /healthz, port: api }
+            periodSeconds: 30
+          resources:
+            requests: { cpu: 10m, memory: 48Mi }
+            limits: { cpu: 250m, memory: 128Mi }
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          volumeMounts:
+            - name: data
+              mountPath: /data
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: social-gate-data
+        - name: tmp
+          emptyDir: {}
+---
+# Agent-facing API: cluster-internal only.
+apiVersion: v1
+kind: Service
+metadata:
+  name: social-gate-api
+  namespace: social-gate
+spec:
+  selector:
+    app: social-gate
+  ports:
+    - name: api
+      port: 8080
+      targetPort: api
+---
+# Human-facing approval UI + OAuth callback. Expose this one (and only this one)
+# through your ingress/tunnel at PUBLIC_URL.
+apiVersion: v1
+kind: Service
+metadata:
+  name: social-gate-admin
+  namespace: social-gate
+spec:
+  selector:
+    app: social-gate
+  ports:
+    - name: admin
+      port: 8081
+      targetPort: admin
+---
+# Default deny everything in this namespace, then open exactly what's needed.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: default-deny
+  namespace: social-gate
+spec:
+  podSelector: {}
+  policyTypes: [Ingress, Egress]
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: social-gate-ingress
+  namespace: social-gate
+spec:
+  podSelector:
+    matchLabels:
+      app: social-gate
+  policyTypes: [Ingress]
+  ingress:
+    # Only the agent pod may reach the API port.
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: default
+          podSelector:
+            matchLabels:
+              app: agent
+      ports:
+        - port: 8080
+    # Admin UI: reachable by the ingress controller / tunnel. Tighten the
+    # `from` to that controller's namespace once the exposure path is decided.
+    - ports:
+        - port: 8081
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: social-gate-egress
+  namespace: social-gate
+spec:
+  podSelector:
+    matchLabels:
+      app: social-gate
+  policyTypes: [Egress]
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+      ports:
+        - { port: 53, protocol: UDP }
+        - { port: 53, protocol: TCP }
+    # Kube API (TokenReview) and graph.facebook.com. Plain NetworkPolicy can't
+    # match hostnames, so this is port-scoped; nothing else leaves the pod.
+    - ports:
+        - { port: 443, protocol: TCP }
+        - { port: 6443, protocol: TCP }
