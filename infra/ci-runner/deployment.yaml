@@ -151,6 +151,8 @@ spec:
               value: "5050"
             - name: MESH_NODE_NAME
               value: mesh-ci-runner
+            - name: MESH_URL
+              value: https://localhost:7979
             - name: CONTROL_TOKEN
               valueFrom:
                 secretKeyRef:
