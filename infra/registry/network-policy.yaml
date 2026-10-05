@@ -1,0 +1,32 @@
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: registry-ingress
+  namespace: mesh-system
+spec:
+  podSelector:
+    matchLabels:
+      app: registry
+  policyTypes: [Ingress]
+  ingress:
+    # Only the registry-proxy sidecar (inside mesh-ci-runner) may push/pull
+    # directly to the upstream registry over the pod network. This prevents
+    # pipeline code or buildkitd from bypassing the proxy by targeting
+    # registry.mesh-system.svc.cluster.local:5000 directly.
+    #
+    # namespaceSelector + podSelector in the same -from entry are ANDed,
+    # so this matches only the mesh-ci-runner pod in the ci namespace.
+    #
+    # Port-forward (deploy scripts → host:5001) and NodePort 30500
+    # (k3s kubelet image pulls) are node-level traffic and are not
+    # subject to NetworkPolicy — they are unaffected by this rule.
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: ci
+          podSelector:
+            matchLabels:
+              app: mesh-ci-runner
+      ports:
+        - port: 5000
+          protocol: TCP
