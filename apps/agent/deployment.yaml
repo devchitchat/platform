@@ -158,10 +158,10 @@ spec:
           limits:
             memory: 2Gi
       - name: mesh
-        # image tag is updated by CI: registry.local:5000/mesh-agent@sha256:093144573f770eec72a0b28c1d2b182ef3bc57d97f88bda212f2fe8316c7249e
+        # Built from local-k8s/cicd/mesh-node — managed as infra, not updated by agent CI.
         # NOTE: this mesh node is intentionally NOT peered with ci-runner or the
         # gitops controller — it serves only the agent's own preview/website repos.
-        image: registry.local:5000/mesh-agent@sha256:093144573f770eec72a0b28c1d2b182ef3bc57d97f88bda212f2fe8316c7249e
+        image: registry.local:5000/mesh-node:latest
         imagePullPolicy: Always
         securityContext:
           runAsNonRoot: true

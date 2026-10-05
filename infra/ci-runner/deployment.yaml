@@ -138,8 +138,9 @@ spec:
 
         - name: registry-proxy
           # Push-scoping proxy: enforces that each pipeline can only push images
-          # matching its repo name. The watchdog sidecar calls /control/session;
-          # the pipeline never holds the token and cannot escalate its allowed image set.
+          # matching its repo name. Sessions are managed internally by subscribing
+          # to the mesh daemon's global CI SSE stream — no watchdog sidecar needed.
+          # The pipeline never holds CONTROL_TOKEN and cannot escalate its allowed image set.
           # Built from local-k8s/cicd/registry-proxy/Dockerfile
           image: registry.local:5000/registry-proxy:latest
           imagePullPolicy: Always
@@ -148,6 +149,8 @@ spec:
               value: http://registry.mesh-system.svc.cluster.local:5000
             - name: PROXY_PORT
               value: "5050"
+            - name: MESH_NODE_NAME
+              value: mesh-ci-runner
             - name: CONTROL_TOKEN
               valueFrom:
                 secretKeyRef:
@@ -162,47 +165,15 @@ spec:
             limits:
               memory: 64Mi
 
-        - name: registry-proxy-watchdog
-          # Polls "mesh ci status" and calls the proxy /control/session API to
-          # register which repo is currently building. Holds the control token;
-          # pipeline scripts never receive it (not in env_passthrough).
-          # Built from local-k8s/cicd/registry-proxy-watchdog/Dockerfile
-          image: registry.local:5000/registry-proxy-watchdog:latest
-          imagePullPolicy: Always
-          env:
-            - name: PROXY_URL
-              value: http://localhost:5050
-            - name: MESH_NODE_NAME
-              value: mesh-ci-runner
-            - name: CONTROL_TOKEN
-              valueFrom:
-                secretKeyRef:
-                  name: registry-proxy-control-token
-                  key: token
-          volumeMounts:
-            - name: mesh-data
-              mountPath: /home/mesh/.mesh
-              readOnly: true
-          resources:
-            requests:
-              cpu: 10m
-              memory: 32Mi
-            limits:
-              memory: 64Mi
-
         - name: buildkitd
-          # Standard BuildKit (root uid) — privileged: true is NOT set.
-          # SYS_ADMIN + seccompProfile:Unconfined gives BuildKit the mount
-          # permissions it needs without opening the full privileged attack surface.
-          # moby/buildkit:rootless fails in k3s/containerd because rootlesskit
-          # cannot make the container root mount private (a containerd constraint).
+          # Standard BuildKit (root uid) — privileged: true required.
+          # SYS_ADMIN + seccompProfile:Unconfined is insufficient on k3s/containerd:
+          # bind mounts from the runc-native snapshot store fail with permission denied
+          # even with SYS_ADMIN. moby/buildkit:rootless also fails here because
+          # rootlesskit cannot make the container root mount private.
           image: moby/buildkit:latest
           securityContext:
-            seccompProfile:
-              type: Unconfined
-            capabilities:
-              add:
-                - SYS_ADMIN
+            privileged: true
           args:
             - --addr
             - tcp://localhost:1234

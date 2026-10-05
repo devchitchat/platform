@@ -54,9 +54,9 @@ spec:
               memory: 128Mi
 
         - name: mesh
-          # mesh-agent: P2P git daemon, CI disabled (this pod is not a runner)
+          # mesh-node: P2P git daemon, CI disabled (this pod is not a runner)
           # Built from devchitchat/agent/Dockerfile.agent-mesh
-          image: registry.local:5000/mesh-agent:latest
+          image: registry.local:5000/mesh-node:latest
           env:
             - name: MESH_NODE_NAME
               value: mesh-gitops-controller

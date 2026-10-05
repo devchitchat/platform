@@ -57,7 +57,7 @@ spec:
               memory: 128Mi
 
         - name: mesh
-          image: registry.local:5000/mesh-agent:latest
+          image: registry.local:5000/mesh-node:latest
           imagePullPolicy: Always
           env:
             - name: MESH_NODE_NAME
