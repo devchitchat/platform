@@ -41,7 +41,9 @@ rules:
       - rolebindings
       - clusterroles
       - clusterrolebindings
-    verbs: ["get", "list", "watch", "create", "update", "patch", "bind", "escalate"]
+    # escalate intentionally omitted: the controller cannot grant permissions it
+    # doesn't already hold. New permission types require a manual kubectl apply.
+    verbs: ["get", "list", "watch", "create", "update", "patch", "bind"]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding
