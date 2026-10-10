@@ -196,6 +196,9 @@ spec:
           securityContext:
             runAsUser: 1000
             runAsNonRoot: true
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
             seccompProfile:
               type: Unconfined
             # Allow rootlesskit to create user namespaces.

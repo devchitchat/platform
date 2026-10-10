@@ -26,6 +26,9 @@ spec:
         app: mesh-gitops-controller
     spec:
       serviceAccountName: mesh-gitops-controller
+      securityContext:
+        fsGroup: 1001
+        fsGroupChangePolicy: OnRootMismatch
       containers:
         - name: controller
           image: registry.local:5000/mesh-gitops-controller:latest
