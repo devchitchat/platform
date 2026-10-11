@@ -186,9 +186,16 @@ spec:
 
         - name: buildkitd
           # Rootless BuildKit — no privileged: true.
-          # Requires the buildkitd-rootless AppArmor profile on the node
-          # (allows userns; see annotation on pod template) and seccomp: Unconfined
-          # so rootlesskit can make the necessary mount syscalls.
+          # Requires seccomp: Unconfined so rootlesskit can make the necessary
+          # mount/unshare syscalls, and AppArmor: Unconfined so the kernel allows
+          # unprivileged user namespace creation (Ubuntu 24.04 restricts this by
+          # default via apparmor_restrict_unprivileged_userns).
+          #
+          # allowPrivilegeEscalation and capabilities.drop:ALL must NOT be set:
+          # rootlesskit calls newuidmap/newgidmap, which are setuid binaries.
+          # no_new_privs=1 (set by allowPrivilegeEscalation:false) prevents the
+          # kernel from honoring the setuid bit, causing:
+          #   fork/exec /usr/bin/newuidmap: operation not permitted
           # --oci-worker-no-process-sandbox stops buildkitd from trying to apply
           # its own seccomp/apparmor profiles to child build processes (not allowed
           # from inside a rootless container).
@@ -196,18 +203,10 @@ spec:
           securityContext:
             runAsUser: 1000
             runAsNonRoot: true
-            allowPrivilegeEscalation: false
-            capabilities:
-              drop: ["ALL"]
             seccompProfile:
               type: Unconfined
-            # Allow rootlesskit to create user namespaces.
-            # kernel.apparmor_restrict_unprivileged_userns=1 on Ubuntu 24.04 blocks
-            # this without a profile; flags=(unconfined) keeps the profile minimal —
-            # it only grants the userns permission, nothing else.
             appArmorProfile:
-              type: Localhost
-              localhostProfile: buildkitd-rootless
+              type: Unconfined
           args:
             - --addr
             - tcp://localhost:1234
