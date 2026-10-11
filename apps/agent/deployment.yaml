@@ -120,8 +120,8 @@ spec:
         - "host.lima.internal"
       containers:
       - name: agent
-        # image tag is updated by CI: registry.local:5000/agent@sha256:f831dd82638b0107f6d5e48b987453c5e6b8d287173245c333ff301751d64b65
-        image: registry.local:5000/agent@sha256:f831dd82638b0107f6d5e48b987453c5e6b8d287173245c333ff301751d64b65
+        # image tag is updated by CI: registry.local:5000/agent@sha256:c638cbbe12edf646afe57334c552e569c3a806164d8b671af08d2b627d3d79c9
+        image: registry.local:5000/agent@sha256:c638cbbe12edf646afe57334c552e569c3a806164d8b671af08d2b627d3d79c9
         imagePullPolicy: Always
         securityContext:
           runAsNonRoot: true
