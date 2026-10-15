@@ -64,7 +64,7 @@ spec:
           # buildkitd uses the server cert; the mesh container (CI runner) uses
           # the client cert. The CA key is deleted after signing so it can't be
           # reused to mint new certs from within the pod.
-          image: alpine:3
+          image: alpine:3@sha256:294b683cb724975bec92580e1e685676bd4b50bda910ddb8c51d4cabeaec77e6
           command: ["/bin/sh", "-c"]
           args:
             - |
@@ -106,7 +106,7 @@ spec:
         - name: mesh
           # mesh daemon with CI enabled + bun + docker CLI
           # Built from local-k8s/cicd/mesh-ci-runner/Dockerfile
-          image: registry.local:5000/mesh-ci-runner:latest
+          image: registry.local:5000/mesh-ci-runner:latest@sha256:13faebd96a303bf141836095b970f31c2e5a7920f7bc6ca7f257a22379604ff7
           imagePullPolicy: Always
           securityContext:
             runAsNonRoot: true
@@ -151,7 +151,7 @@ spec:
           # to the mesh daemon's global CI SSE stream — no watchdog sidecar needed.
           # The pipeline never holds CONTROL_TOKEN and cannot escalate its allowed image set.
           # Built from local-k8s/cicd/registry-proxy/Dockerfile
-          image: registry.local:5000/registry-proxy:latest
+          image: registry.local:5000/registry-proxy:latest@sha256:fab1b62288fa64753725ff44157f95cd308c4eebbae5cf82454beeb37b4ed2a8
           imagePullPolicy: Always
           securityContext:
             runAsNonRoot: true
@@ -199,7 +199,7 @@ spec:
           # --oci-worker-no-process-sandbox stops buildkitd from trying to apply
           # its own seccomp/apparmor profiles to child build processes (not allowed
           # from inside a rootless container).
-          image: moby/buildkit:rootless
+          image: moby/buildkit:rootless@sha256:65eca3c01cd1180c8f64565c4e3c5983af5145818b0e6fa863385d099eb73855
           securityContext:
             runAsUser: 1000
             runAsNonRoot: true
