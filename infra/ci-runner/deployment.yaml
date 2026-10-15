@@ -135,8 +135,37 @@ spec:
           volumeMounts:
             - name: mesh-data
               mountPath: /home/mesh/.mesh
+            # Per-file subPath mounts so each container sees only its own certs.
+            # Motivation: --oci-worker-no-process-sandbox means build steps share
+            # buildkitd's process namespace and uid. A RUN step could read buildkitd's
+            # /certs/ via /proc/<pid>/root/certs/ and steal any client credentials
+            # mounted there. Keeping client and server certs in separate mount trees
+            # closes that path.
+            #
+            # Day 2 notes:
+            # 1. This manifest is the access control list. Adding a cert file to the
+            #    initContainer script is not enough — you must also add a subPath entry
+            #    here. If you forget, the container starts without error but can't find
+            #    the file (silent TLS failure, not a mount error).
+            # 2. subPath binds a specific inode at pod start. In-place file replacement
+            #    after startup (e.g. a live rotation sidecar using rename/atomic write)
+            #    would not be visible. Today rotation = pod restart, so this is fine.
+            #    If that ever changes, drop subPath and isolate at the directory level
+            #    using two separate emptyDir volumes instead.
+            # 3. When exec-ing into this container to debug TLS, only ca.pem,
+            #    client.pem, and client-key.pem will be visible under /certs/.
+            #    The server certs are not here — that is intentional.
             - name: buildkit-certs
-              mountPath: /certs
+              mountPath: /certs/ca.pem
+              subPath: ca.pem
+              readOnly: true
+            - name: buildkit-certs
+              mountPath: /certs/client.pem
+              subPath: client.pem
+              readOnly: true
+            - name: buildkit-certs
+              mountPath: /certs/client-key.pem
+              subPath: client-key.pem
               readOnly: true
           resources:
             requests:
@@ -227,8 +256,22 @@ spec:
             - name: buildkit-config
               mountPath: /etc/buildkit
               readOnly: true
+            # Per-file subPath mounts — buildkitd sees only server-side certs.
+            # Client certs (client.pem, client-key.pem) are intentionally absent;
+            # see the mesh container's volumeMounts for the full day 2 rationale.
+            # When exec-ing here to debug TLS, only ca.pem, server.pem, and
+            # server-key.pem will be visible under /certs/. That is correct.
             - name: buildkit-certs
-              mountPath: /certs
+              mountPath: /certs/ca.pem
+              subPath: ca.pem
+              readOnly: true
+            - name: buildkit-certs
+              mountPath: /certs/server.pem
+              subPath: server.pem
+              readOnly: true
+            - name: buildkit-certs
+              mountPath: /certs/server-key.pem
+              subPath: server-key.pem
               readOnly: true
           resources:
             requests:
