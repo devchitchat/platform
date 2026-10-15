@@ -90,14 +90,20 @@ rules:
   resources: ["discoverycallrequests"]
   verbs: ["create"]
 ---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: joeyguerra-website
+  namespace: apps
+---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding
 metadata:
-  name: jbot-website-discovery-call-request-creator
+  name: joeyguerra-website-discovery-call-request-creator
   namespace: apps
 subjects:
 - kind: ServiceAccount
-  name: jbot-website
+  name: joeyguerra-website
   namespace: apps
 roleRef:
   kind: Role
