@@ -48,7 +48,10 @@ spec:
               value: https://localhost:7979/platform.git
             - name: GITOPS_REPO_BRANCH
               value: main
-            # Watch all platform subdirectories; never includes mesh-gitops apps/
+            # Watch all platform subdirectories in platform.git.
+            # "apps" here refers to platform-level app manifests (controllers,
+            # registry, etc.) — not user apps in mesh-gitops.git, which are
+            # managed exclusively by apps-controller with a namespaced Role.
             - name: GITOPS_WATCH_DIRS
               value: "apps infra crds namespaces"
             - name: POLL_INTERVAL_MS
