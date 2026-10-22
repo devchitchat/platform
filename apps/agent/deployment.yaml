@@ -161,7 +161,7 @@ spec:
         # Built from local-k8s/cicd/mesh-node — managed as infra, not updated by agent CI.
         # NOTE: this mesh node is intentionally NOT peered with ci-runner or the
         # gitops controller — it serves only the agent's own preview/website repos.
-        image: registry.local:5000/mesh-node:latest
+        image: registry.local:5000/mesh-node:latest@sha256:cf5a57cc8d9f29b14274ee1af969c5e38cb6213438129f9e5164c4e24b0d3071
         imagePullPolicy: Always
         securityContext:
           runAsNonRoot: true
