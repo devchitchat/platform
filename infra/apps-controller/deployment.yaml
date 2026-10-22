@@ -31,7 +31,7 @@ spec:
         fsGroupChangePolicy: OnRootMismatch
       containers:
         - name: controller
-          image: registry.local:5000/mesh-gitops-controller:latest
+          image: registry.local:5000/mesh-gitops-controller:latest@sha256:3b4b1fc3748a977fef7ef7376b2ad910bf4402e7940bc5a3c7c2edff8ad32ad2
           imagePullPolicy: Always
           securityContext:
             runAsNonRoot: true

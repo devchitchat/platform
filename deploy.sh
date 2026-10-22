@@ -1,17 +1,28 @@
 #!/bin/bash
-# Apply all platform Kubernetes manifests in dependency order.
+# Apply platform Kubernetes manifests in dependency order.
 #
-# This script is the trusted path for bootstrapping or re-syncing the full
-# platform from scratch. It applies resources in the correct order so that
-# dependencies (namespaces, CRDs, RBAC) exist before the workloads that need
-# them. It is idempotent — safe to re-run at any time.
+# This script is the trusted path for bootstrapping or re-syncing the platform.
+# It applies resources in the correct order so that dependencies (namespaces,
+# CRDs, RBAC) exist before the workloads that need them. Idempotent — safe to
+# re-run at any time.
 #
 # It does NOT build or push images. For that, use the per-app deploy scripts:
-#   apps/agent/deploy.sh
-#   apps/social-gate/deploy.sh
+#   apps/agent/deploy.sh        — build + push + apply agent
+#   apps/social-gate/deploy.sh  — build + push + apply social-gate
 #
-# Usage (from anywhere):
-#   ./platform/deploy.sh
+# Usage:
+#   ./deploy.sh                          — apply everything (bootstrap / full re-sync)
+#   ./deploy.sh --component <name>       — apply one component only
+#
+# Components:
+#   namespaces       namespaces/namespaces.yaml + infra/ci-runner/namespace.yaml
+#   crds             crds/
+#   rbac             infra/apps-controller/rbac.yaml
+#   registry         infra/registry/
+#   ci-runner        infra/ci-runner/deployment.yaml + service.yaml
+#   apps-controller  infra/apps-controller/deployment.yaml
+#   social-gate      apps/social-gate/deployment.yaml
+#   agent            apps/agent/deployment.yaml
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
@@ -23,48 +34,94 @@ _apply() {
 }
 
 # ---------------------------------------------------------------------------
-# 1. Namespaces — must exist before anything else
-# ---------------------------------------------------------------------------
-_apply namespaces/namespaces.yaml
-_apply infra/ci-runner/namespace.yaml
-
-# ---------------------------------------------------------------------------
-# 2. CRDs — must exist before controllers that watch these resources
-# ---------------------------------------------------------------------------
-_apply crds/joeyguerra.yaml
-_apply crds/fieldmappings.yaml
-
-# ---------------------------------------------------------------------------
-# 3. RBAC — ServiceAccounts, Roles, ClusterRoles, bindings
-#    mesh-system namespace is created inside mesh-gitops-controller/rbac.yaml
-# ---------------------------------------------------------------------------
-_apply infra/mesh-gitops-controller/rbac.yaml
-_apply infra/apps-controller/rbac.yaml
-
-# ---------------------------------------------------------------------------
-# 4. Infrastructure workloads
+# Component functions
 # ---------------------------------------------------------------------------
 
-# Registry — other infra components pull images through it
-_apply infra/registry/deployment.yaml
-_apply infra/registry/network-policy.yaml
+_component_namespaces() {
+  _apply namespaces/namespaces.yaml
+  _apply infra/ci-runner/namespace.yaml
+}
 
-# CI runner — depends on registry being present
-_apply infra/ci-runner/deployment.yaml
-_apply infra/ci-runner/service.yaml
+_component_crds() {
+  _apply crds/joeyguerra.yaml
+  _apply crds/fieldmappings.yaml
+}
 
-# Controllers — depend on CRDs and RBAC being in place
-_apply infra/apps-controller/deployment.yaml
-_apply infra/mesh-gitops-controller/deployment.yaml
-_apply infra/mesh-gitops-controller/service.yaml
+_component_rbac() {
+  _apply infra/apps-controller/rbac.yaml
+}
+
+_component_registry() {
+  _apply infra/registry/deployment.yaml
+  _apply infra/registry/network-policy.yaml
+}
+
+_component_ci_runner() {
+  _apply infra/ci-runner/deployment.yaml
+  _apply infra/ci-runner/service.yaml
+}
+
+_component_apps_controller() {
+  _apply infra/apps-controller/deployment.yaml
+}
+
+_component_social_gate() {
+  _apply apps/social-gate/deployment.yaml
+}
+
+_component_agent() {
+  _apply apps/agent/deployment.yaml
+}
 
 # ---------------------------------------------------------------------------
-# 5. Apps — deployed out-of-band (images must already be in the registry)
-#    NOTE: infra/ci-runner/secret-template.yaml is intentionally skipped;
-#          it is a documentation reminder, not a real manifest.
+# Dispatch
 # ---------------------------------------------------------------------------
-_apply apps/social-gate/deployment.yaml
-_apply apps/agent/deployment.yaml
 
-echo ""
-echo "All manifests applied."
+COMPONENT=""
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --component)
+      shift
+      COMPONENT="${1:-}"
+      [ -z "${COMPONENT}" ] && { echo "ERROR: --component requires a value"; exit 1; }
+      ;;
+    --component=*)
+      COMPONENT="${1#--component=}"
+      ;;
+    *)
+      echo "ERROR: unknown argument '$1'"
+      echo "Usage: ./deploy.sh [--component <name>]"
+      exit 1
+      ;;
+  esac
+  shift
+done
+
+if [ -n "${COMPONENT}" ]; then
+  FN="_component_$(echo "${COMPONENT}" | tr '-' '_')"
+  if ! declare -f "${FN}" > /dev/null 2>&1; then
+    echo "ERROR: unknown component '${COMPONENT}'"
+    echo ""
+    echo "Known components:"
+    echo "  namespaces  crds  rbac  registry  ci-runner"
+    echo "  apps-controller  social-gate  agent"
+    exit 1
+  fi
+  "${FN}"
+  echo ""
+  echo "Done: ${COMPONENT}"
+else
+  # Full bootstrap in dependency order.
+  # NOTE: infra/ci-runner/secret-template.yaml is intentionally skipped;
+  #       it is a documentation reminder, not a real manifest.
+  _component_namespaces
+  _component_crds
+  _component_rbac
+  _component_registry
+  _component_ci_runner
+  _component_apps_controller
+  _component_social_gate
+  _component_agent
+  echo ""
+  echo "All manifests applied."
+fi

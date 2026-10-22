@@ -106,7 +106,7 @@ spec:
         - name: mesh
           # mesh daemon with CI enabled + bun + docker CLI
           # Built from local-k8s/cicd/mesh-ci-runner/Dockerfile
-          image: registry.local:5000/mesh-ci-runner:latest@sha256:13faebd96a303bf141836095b970f31c2e5a7920f7bc6ca7f257a22379604ff7
+          image: registry.local:5000/mesh-ci-runner:latest@sha256:4a10f91ff8ceb929a978fcea0a4e0711dcd6b4138862e0f54cb7b1d66385e8d9
           imagePullPolicy: Always
           securityContext:
             runAsNonRoot: true
@@ -180,7 +180,7 @@ spec:
           # to the mesh daemon's global CI SSE stream — no watchdog sidecar needed.
           # The pipeline never holds CONTROL_TOKEN and cannot escalate its allowed image set.
           # Built from local-k8s/cicd/registry-proxy/Dockerfile
-          image: registry.local:5000/registry-proxy:latest@sha256:fab1b62288fa64753725ff44157f95cd308c4eebbae5cf82454beeb37b4ed2a8
+          image: registry.local:5000/registry-proxy:latest@sha256:5a284e0ac426b9ac6fab186abea74ee86e6e3a83d52d7afee15d12ec86791a36
           imagePullPolicy: Always
           securityContext:
             runAsNonRoot: true
