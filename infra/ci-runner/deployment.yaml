@@ -59,6 +59,16 @@ spec:
         app: mesh-ci-runner
     spec:
       initContainers:
+        - name: init-mesh-perms
+          # Runs as root to lock down the mesh data directory before the mesh
+          # container starts. 700 means only uid=1001 (mesh) can enter — shell
+          # jobs running as uid=65533 (mesh-jobs) cannot read keys/, mesh.toml,
+          # or push-token-hash even if jobs_uid is misconfigured.
+          image: alpine:3@sha256:294b683cb724975bec92580e1e685676bd4b50bda910ddb8c51d4cabeaec77e6
+          command: ["chmod", "700", "/home/mesh/.mesh"]
+          volumeMounts:
+            - name: mesh-data
+              mountPath: /home/mesh/.mesh
         - name: gen-buildkit-certs
           # Generates a short-lived CA and mTLS cert pair at pod startup.
           # buildkitd uses the server cert; the mesh container (CI runner) uses
@@ -106,7 +116,7 @@ spec:
         - name: mesh
           # mesh daemon with CI enabled + bun + docker CLI
           # Built from local-k8s/cicd/mesh-ci-runner/Dockerfile
-          image: registry.local:5000/mesh-ci-runner:latest@sha256:83a36ca8c2c1241ecd21e94a3627833ab138037d49b73106df9f2663eb78bd10
+          image: registry.local:5000/mesh-ci-runner:latest@sha256:4d8039178def0ed688805a00dd67da28792bcd61f11d6d0d4be8a757480ac109
           imagePullPolicy: Always
           securityContext:
             runAsNonRoot: true

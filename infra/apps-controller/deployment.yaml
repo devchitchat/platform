@@ -68,7 +68,7 @@ spec:
               memory: 128Mi
 
         - name: mesh
-          image: registry.local:5000/mesh-node:latest@sha256:7eb7db7d6646e75d599cec9825d60008774c522538029744540477df7de9a4a4
+          image: registry.local:5000/mesh-node:latest@sha256:374b99880a1964286e1ff89925ed5a38e15f6031646baa43cc99cad6f2699ba4
           imagePullPolicy: Always
           securityContext:
             runAsNonRoot: true
