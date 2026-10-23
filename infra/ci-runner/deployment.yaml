@@ -116,15 +116,18 @@ spec:
         - name: mesh
           # mesh daemon with CI enabled + bun + docker CLI
           # Built from local-k8s/cicd/mesh-ci-runner/Dockerfile
-          image: registry.local:5000/mesh-ci-runner:latest@sha256:4d8039178def0ed688805a00dd67da28792bcd61f11d6d0d4be8a757480ac109
+          image: registry.local:5000/mesh-ci-runner:latest@sha256:6b506ed292e0ca669766ccb58365b24025242b460acf4b749e40a897372478b5
           imagePullPolicy: Always
           securityContext:
             runAsNonRoot: true
             runAsUser: 1001
-            # allowPrivilegeEscalation:false sets no_new_privs=1 which prevents
-            # setuid *binaries* from escalating. It does NOT block the setuid(2)
-            # syscall used by Bun.spawn uid/gid, so it is safe to keep here.
-            allowPrivilegeEscalation: false
+            # allowPrivilegeEscalation must NOT be set to false here.
+            # Setting it to false applies no_new_privs=1, which prevents the
+            # container runtime from preserving SETUID/SETGID in the effective
+            # capability set through the uid switch to 1001. With no_new_privs,
+            # CapEff ends up 0 and Bun.spawn { uid, gid } fails with EPERM.
+            # The capabilities.drop: ALL + add: [SETUID, SETGID] already
+            # limits the blast radius — only these two capabilities are usable.
             capabilities:
               drop: ["ALL"]
               # SETUID + SETGID: allows the daemon (uid=1001) to spawn shell jobs
