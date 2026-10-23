@@ -106,14 +106,21 @@ spec:
         - name: mesh
           # mesh daemon with CI enabled + bun + docker CLI
           # Built from local-k8s/cicd/mesh-ci-runner/Dockerfile
-          image: registry.local:5000/mesh-ci-runner:latest@sha256:490758557cc9f6fb1d0bf637caa8a5c4144020beb6bcbad9940a32b3bd9f8697
+          image: registry.local:5000/mesh-ci-runner:latest@sha256:83a36ca8c2c1241ecd21e94a3627833ab138037d49b73106df9f2663eb78bd10
           imagePullPolicy: Always
           securityContext:
             runAsNonRoot: true
             runAsUser: 1001
+            # allowPrivilegeEscalation:false sets no_new_privs=1 which prevents
+            # setuid *binaries* from escalating. It does NOT block the setuid(2)
+            # syscall used by Bun.spawn uid/gid, so it is safe to keep here.
             allowPrivilegeEscalation: false
             capabilities:
               drop: ["ALL"]
+              # SETUID + SETGID: allows the daemon (uid=1001) to spawn shell jobs
+              # as mesh-jobs (uid=65533) via Bun.spawn { uid, gid }. Jobs run
+              # with no capabilities of their own and cannot enter ~/.mesh (700).
+              add: ["SETUID", "SETGID"]
             seccompProfile:
               type: RuntimeDefault
           envFrom:
