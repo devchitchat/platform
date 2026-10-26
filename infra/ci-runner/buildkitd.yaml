@@ -1,0 +1,313 @@
+# Buildkitd — standalone pod with mTLS, NetworkPolicy, and a one-time cert-gen Job.
+#
+# Apply order: apply this file first (creates the Secret), then apply deployment.yaml.
+# The mesh-ci-runner Deployment won't start until the buildkitd-certs Secret exists.
+#
+# Cert rotation:
+#   kubectl delete job buildkitd-cert-gen -n ci
+#   kubectl delete secret buildkitd-certs -n ci
+#   kubectl apply -f buildkitd.yaml
+# Both pods will then restart and pick up the new Secret.
+
+# ---------- RBAC for the cert-gen Job ----------
+
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: buildkitd-cert-gen
+  namespace: ci
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: buildkitd-cert-gen
+  namespace: ci
+rules:
+  # create: resourceNames restriction doesn't apply to create (resource doesn't exist yet).
+  - apiGroups: [""]
+    resources: ["secrets"]
+    verbs: ["create"]
+  # get/update/patch restricted to the specific Secret so the Job can't touch anything else.
+  - apiGroups: [""]
+    resources: ["secrets"]
+    verbs: ["get", "update", "patch"]
+    resourceNames: ["buildkitd-certs"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: buildkitd-cert-gen
+  namespace: ci
+subjects:
+  - kind: ServiceAccount
+    name: buildkitd-cert-gen
+    namespace: ci
+roleRef:
+  kind: Role
+  apiGroup: rbac.authorization.k8s.io
+  name: buildkitd-cert-gen
+
+---
+# ---------- Cert-gen Job ----------
+#
+# Generates a CA, server cert (SAN: buildkitd cluster DNS + localhost), and client cert.
+# Writes all five files to the buildkitd-certs Secret.
+# Idempotent: exits 0 immediately if the Secret already exists.
+# ttlSecondsAfterFinished: Job is cleaned up 10 min after completion to keep the namespace tidy.
+# The Secret persists — the Job is just a bootstrap mechanism.
+
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: buildkitd-cert-gen
+  namespace: ci
+spec:
+  ttlSecondsAfterFinished: 600
+  template:
+    spec:
+      serviceAccountName: buildkitd-cert-gen
+      restartPolicy: OnFailure
+      initContainers:
+        - name: gen-certs
+          image: alpine:3@sha256:294b683cb724975bec92580e1e685676bd4b50bda910ddb8c51d4cabeaec77e6
+          command: ["/bin/sh", "-c"]
+          args:
+            - |
+              set -e
+              apk add --no-cache openssl > /dev/null 2>&1
+
+              # CA
+              openssl genrsa -out /certs/ca-key.pem 2048
+              openssl req -new -x509 -sha256 -key /certs/ca-key.pem -out /certs/ca.pem \
+                -days 3650 -subj "/CN=buildkit-ca"
+
+              # Server cert — SAN covers the Service DNS names and localhost.
+              # The Deployment uses tcp://0.0.0.0:1234 so clients connect via the
+              # Service DNS name; localhost is kept for kubectl port-forward debugging.
+              openssl genrsa -out /certs/server-key.pem 2048
+              openssl req -new -sha256 -key /certs/server-key.pem -out /tmp/server.csr \
+                -subj "/CN=buildkitd"
+              printf "subjectAltName=IP:127.0.0.1,DNS:localhost,DNS:buildkitd,DNS:buildkitd.ci.svc.cluster.local\n" \
+                > /tmp/server-ext.cnf
+              openssl x509 -req -sha256 -in /tmp/server.csr -CA /certs/ca.pem \
+                -CAkey /certs/ca-key.pem -CAcreateserial -out /certs/server.pem \
+                -days 3650 -extfile /tmp/server-ext.cnf
+
+              # Client cert (used by the mesh-ci-runner to authenticate to buildkitd)
+              openssl genrsa -out /certs/client-key.pem 2048
+              openssl req -new -sha256 -key /certs/client-key.pem -out /tmp/client.csr \
+                -subj "/CN=buildkit-client"
+              openssl x509 -req -sha256 -in /tmp/client.csr -CA /certs/ca.pem \
+                -CAkey /certs/ca-key.pem -CAcreateserial -out /certs/client.pem -days 3650
+
+              # CA key served its purpose; delete it so nothing inside the cluster can
+              # mint new certs without re-running this Job.
+              rm /certs/ca-key.pem
+              chmod 0444 /certs/ca.pem /certs/server.pem /certs/client.pem
+              chmod 0400 /certs/server-key.pem /certs/client-key.pem
+              echo "certs generated"
+          volumeMounts:
+            - name: certs
+              mountPath: /certs
+      containers:
+        - name: create-secret
+          image: bitnami/kubectl:1.31
+          command: ["/bin/sh", "-c"]
+          args:
+            - |
+              set -e
+              if kubectl get secret buildkitd-certs -n ci > /dev/null 2>&1; then
+                echo "buildkitd-certs Secret already exists — skipping"
+                exit 0
+              fi
+              kubectl create secret generic buildkitd-certs -n ci \
+                --from-file=ca.pem=/certs/ca.pem \
+                --from-file=server.pem=/certs/server.pem \
+                --from-file=server-key.pem=/certs/server-key.pem \
+                --from-file=client.pem=/certs/client.pem \
+                --from-file=client-key.pem=/certs/client-key.pem
+              echo "buildkitd-certs Secret created"
+          volumeMounts:
+            - name: certs
+              mountPath: /certs
+              readOnly: true
+      volumes:
+        - name: certs
+          emptyDir: {}
+
+---
+# ---------- ConfigMap ----------
+
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: buildkitd-config
+  namespace: ci
+data:
+  buildkitd.toml: |
+    [worker.oci]
+      enabled = true
+
+    # Allow pushing to the registry over plain HTTP.
+    # registry-proxy is gone; buildkitd pushes directly to the in-cluster registry.
+    [registry."registry.mesh-system.svc.cluster.local:5000"]
+      http = true
+      insecure = true
+
+---
+# ---------- PVC for build layer cache ----------
+
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: buildkitd-cache
+  namespace: ci
+spec:
+  accessModes: [ReadWriteOnce]
+  storageClassName: local-path
+  resources:
+    requests:
+      storage: 20Gi
+
+---
+# ---------- Deployment ----------
+
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: buildkitd
+  namespace: ci
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: buildkitd
+  template:
+    metadata:
+      labels:
+        app: buildkitd
+    spec:
+      containers:
+        - name: buildkitd
+          # Rootless BuildKit — no privileged: true.
+          # Requires seccomp: Unconfined so rootlesskit can make mount/unshare syscalls,
+          # and AppArmor: Unconfined so the kernel allows unprivileged user namespace
+          # creation (Ubuntu 24.04 restricts this by default).
+          #
+          # allowPrivilegeEscalation and capabilities.drop:ALL must NOT be set:
+          # rootlesskit calls newuidmap/newgidmap (setuid binaries); no_new_privs=1
+          # prevents the kernel from honouring the setuid bit.
+          #
+          # --oci-worker-no-process-sandbox stops buildkitd from applying its own
+          # seccomp/apparmor profiles to child build processes (not permitted from
+          # inside a rootless container).
+          image: moby/buildkit:rootless@sha256:65eca3c01cd1180c8f64565c4e3c5983af5145818b0e6fa863385d099eb73855
+          securityContext:
+            runAsUser: 1000
+            runAsNonRoot: true
+            seccompProfile:
+              type: Unconfined
+            appArmorProfile:
+              type: Unconfined
+          args:
+            - --addr
+            # Listen on all interfaces — clients connect via the Service DNS name,
+            # not localhost. mTLS provides authentication; NetworkPolicy scopes access.
+            - tcp://0.0.0.0:1234
+            - --config
+            - /etc/buildkit/buildkitd.toml
+            - --oci-worker-no-process-sandbox
+            - --tlscacert
+            - /certs/ca.pem
+            - --tlscert
+            - /certs/server.pem
+            - --tlskey
+            - /certs/server-key.pem
+          ports:
+            - containerPort: 1234
+          volumeMounts:
+            - name: buildkitd-cache
+              mountPath: /home/user/.local/share/buildkit
+            - name: buildkit-config
+              mountPath: /etc/buildkit
+              readOnly: true
+            # Server-side certs only. Client certs (client.pem, client-key.pem) are
+            # intentionally absent — they live in the mesh-ci-runner pod.
+            - name: buildkit-certs
+              mountPath: /certs/ca.pem
+              subPath: ca.pem
+              readOnly: true
+            - name: buildkit-certs
+              mountPath: /certs/server.pem
+              subPath: server.pem
+              readOnly: true
+            - name: buildkit-certs
+              mountPath: /certs/server-key.pem
+              subPath: server-key.pem
+              readOnly: true
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+            limits:
+              memory: 2Gi
+      volumes:
+        - name: buildkitd-cache
+          persistentVolumeClaim:
+            claimName: buildkitd-cache
+        - name: buildkit-config
+          configMap:
+            name: buildkitd-config
+        - name: buildkit-certs
+          secret:
+            secretName: buildkitd-certs
+            # Keys are 0444/0400 as set by the cert-gen Job, but defaultMode
+            # is the fallback for any files not given explicit permissions via items[].
+            defaultMode: 0400
+
+---
+# ---------- Service ----------
+
+apiVersion: v1
+kind: Service
+metadata:
+  name: buildkitd
+  namespace: ci
+spec:
+  type: ClusterIP
+  selector:
+    app: buildkitd
+  ports:
+    - name: buildkitd
+      port: 1234
+      targetPort: 1234
+      protocol: TCP
+
+---
+# ---------- NetworkPolicy ----------
+#
+# Only mesh-ci-runner pods in the ci namespace may reach buildkitd on port 1234.
+# All other ingress — including other pods in the ci namespace — is denied.
+# mTLS provides a second layer: even if policy is misconfigured, the client must
+# present a cert signed by the same CA.
+
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: buildkitd-ingress
+  namespace: ci
+spec:
+  podSelector:
+    matchLabels:
+      app: buildkitd
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app: mesh-ci-runner
+      ports:
+        - port: 1234
+          protocol: TCP

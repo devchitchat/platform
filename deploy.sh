@@ -19,6 +19,7 @@
 #   crds             crds/
 #   rbac             infra/apps-controller/rbac.yaml
 #   registry         infra/registry/
+#   buildkitd        infra/ci-runner/buildkitd.yaml (RBAC, cert-gen Job, Deployment, Service, NetworkPolicy)
 #   ci-runner        infra/ci-runner/deployment.yaml + service.yaml
 #   apps-controller  infra/apps-controller/deployment.yaml
 #   social-gate      apps/social-gate/deployment.yaml
@@ -54,6 +55,12 @@ _component_rbac() {
 _component_registry() {
   _apply infra/registry/deployment.yaml
   _apply infra/registry/network-policy.yaml
+}
+
+_component_buildkitd() {
+  # Apply before ci-runner: the mesh-ci-runner pod won't start without the
+  # buildkitd-certs Secret that the cert-gen Job creates.
+  _apply infra/ci-runner/buildkitd.yaml
 }
 
 _component_ci_runner() {
@@ -103,7 +110,7 @@ if [ -n "${COMPONENT}" ]; then
     echo "ERROR: unknown component '${COMPONENT}'"
     echo ""
     echo "Known components:"
-    echo "  namespaces  crds  rbac  registry  ci-runner"
+    echo "  namespaces  crds  rbac  registry  buildkitd  ci-runner"
     echo "  apps-controller  social-gate  agent"
     exit 1
   fi
@@ -118,6 +125,7 @@ else
   _component_crds
   _component_rbac
   _component_registry
+  _component_buildkitd
   _component_ci_runner
   _component_apps_controller
   _component_social_gate
