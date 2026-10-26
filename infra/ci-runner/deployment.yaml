@@ -41,12 +41,11 @@ spec:
         - name: mesh
           # mesh daemon with CI enabled + bun + docker CLI
           # Built from infra/cicd/mesh-ci-runner/Dockerfile
-          image: registry.local:5000/mesh-ci-runner:latest@sha256:984ddbf7a683dda84229d4676a1a16b93aba5f1ab8a1fdcbe8dbd311d7171cd3
+          image: registry.local:5000/mesh-ci-runner:latest@sha256:47f0be45192fc9304eec2df7964f3617e23c371211c2894e5a6b883b69ed9d2b
           imagePullPolicy: Always
           securityContext:
             runAsNonRoot: true
             runAsUser: 1001
-            allowPrivilegeEscalation: false
             capabilities:
               drop: ["ALL"]
             seccompProfile:
@@ -100,4 +99,5 @@ spec:
         - name: buildkit-certs
           secret:
             secretName: buildkitd-certs
-            defaultMode: 0400
+            # 0444: Secret volumes are owned by root; mesh runs as uid 1001.
+            defaultMode: 0444

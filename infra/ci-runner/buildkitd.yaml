@@ -111,11 +111,14 @@ spec:
               mountPath: /certs
       containers:
         - name: create-secret
-          image: bitnami/kubectl:1.31
+          # Reuse the same alpine image already cached on the node.
+          # kubectl is in Alpine's community repo (no separate image pull needed).
+          image: alpine:3@sha256:294b683cb724975bec92580e1e685676bd4b50bda910ddb8c51d4cabeaec77e6
           command: ["/bin/sh", "-c"]
           args:
             - |
               set -e
+              apk add --no-cache kubectl > /dev/null 2>&1
               if kubectl get secret buildkitd-certs -n ci > /dev/null 2>&1; then
                 echo "buildkitd-certs Secret already exists — skipping"
                 exit 0
@@ -263,9 +266,10 @@ spec:
         - name: buildkit-certs
           secret:
             secretName: buildkitd-certs
-            # Keys are 0444/0400 as set by the cert-gen Job, but defaultMode
-            # is the fallback for any files not given explicit permissions via items[].
-            defaultMode: 0400
+            # 0444: Kubernetes Secret volumes are owned by root. buildkitd runs as
+            # uid 1000, so the files must be world-readable. The Secret itself is
+            # the access boundary — only this pod's spec mounts it.
+            defaultMode: 0444
 
 ---
 # ---------- Service ----------
@@ -286,7 +290,7 @@ spec:
       protocol: TCP
 
 ---
-# ---------- NetworkPolicy ----------
+# ---------- NetworkPolicy: ingress ----------
 #
 # Only mesh-ci-runner pods in the ci namespace may reach buildkitd on port 1234.
 # All other ingress — including other pods in the ci namespace — is denied.
@@ -310,4 +314,65 @@ spec:
               app: mesh-ci-runner
       ports:
         - port: 1234
+          protocol: TCP
+
+---
+# ---------- NetworkPolicy: egress ----------
+#
+# buildkitd needs three egress paths:
+#   1. DNS — resolve registry.mesh-system.svc.cluster.local and external hostnames.
+#   2. Registry on port 5000 — push built images.
+#   3. Internet (public IPs only) — pull base images from Docker Hub / ghcr.io / etc.
+#      Private and cluster address ranges are excluded so build steps cannot reach
+#      other in-cluster services unless explicitly allowed above.
+
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: buildkitd-egress
+  namespace: ci
+spec:
+  podSelector:
+    matchLabels:
+      app: buildkitd
+  policyTypes: [Egress]
+  egress:
+    # DNS — kube-dns in kube-system (both UDP and TCP for large responses).
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - port: 53
+          protocol: UDP
+        - port: 53
+          protocol: TCP
+    # Registry — push built images to the in-cluster registry.
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: mesh-system
+          podSelector:
+            matchLabels:
+              app: registry
+      ports:
+        - port: 5000
+          protocol: TCP
+    # Internet — pull base images (Docker Hub, ghcr.io, gcr.io, …).
+    # Private and RFC-1918 ranges are excluded; cluster traffic uses the rules above.
+    - to:
+        - ipBlock:
+            cidr: 0.0.0.0/0
+            except:
+              - 10.0.0.0/8
+              - 172.16.0.0/12
+              - 192.168.0.0/16
+              - 127.0.0.0/8
+      ports:
+        - port: 80
+          protocol: TCP
+        - port: 443
           protocol: TCP

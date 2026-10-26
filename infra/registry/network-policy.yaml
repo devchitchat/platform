@@ -9,17 +9,15 @@ spec:
       app: registry
   policyTypes: [Ingress]
   ingress:
-    # Only the registry-proxy sidecar (inside mesh-ci-runner) may push/pull
-    # directly to the upstream registry over the pod network. This prevents
-    # pipeline code or buildkitd from bypassing the proxy by targeting
-    # registry.mesh-system.svc.cluster.local:5000 directly.
-    #
     # namespaceSelector + podSelector in the same -from entry are ANDed,
-    # so this matches only the mesh-ci-runner pod in the ci namespace.
+    # so each rule matches exactly one pod in one namespace.
     #
     # Port-forward (deploy scripts → host:5001) and NodePort 30500
     # (k3s kubelet image pulls) are node-level traffic and are not
-    # subject to NetworkPolicy — they are unaffected by this rule.
+    # subject to NetworkPolicy — they are unaffected by these rules.
+    #
+    # mesh-ci-runner: issues docker buildx build commands (pushes through buildkitd,
+    # but may also pull directly for layer-existence checks).
     - from:
         - namespaceSelector:
             matchLabels:
@@ -27,6 +25,17 @@ spec:
           podSelector:
             matchLabels:
               app: mesh-ci-runner
+      ports:
+        - port: 5000
+          protocol: TCP
+    # buildkitd: pushes built images directly to the registry.
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: ci
+          podSelector:
+            matchLabels:
+              app: buildkitd
       ports:
         - port: 5000
           protocol: TCP
