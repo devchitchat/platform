@@ -120,8 +120,8 @@ spec:
         - "host.lima.internal"
       containers:
       - name: agent
-        # image tag is updated by CI: registry.local:5000/agent@sha256:4ea3ec360a0376011d5afcb48d4482fb8157493cdd11e2e341019e8039a3a004
-        image: registry.local:5000/agent@sha256:4ea3ec360a0376011d5afcb48d4482fb8157493cdd11e2e341019e8039a3a004
+        # image tag is updated by CI: registry.local:5000/agent@sha256:3ce5e03032e092f6f456ff73cfde6d6fad010563c92e0e4f19deb93b6cad2177
+        image: registry.local:5000/agent@sha256:3ce5e03032e092f6f456ff73cfde6d6fad010563c92e0e4f19deb93b6cad2177
         imagePullPolicy: Always
         securityContext:
           runAsNonRoot: true
@@ -161,7 +161,7 @@ spec:
         # Built from local-k8s/cicd/mesh-node — managed as infra, not updated by agent CI.
         # NOTE: this mesh node is intentionally NOT peered with ci-runner or the
         # gitops controller — it serves only the agent's own preview/website repos.
-        image: registry.local:5000/mesh-node:latest@sha256:c2beac272c476d329d245b8a9ba736343fcebe2d49ffd82495c45ee1773aeccb
+        image: registry.local:5000/mesh-node:latest@sha256:7cd2cb0ec74f43c441de086516bc276c5aeb002cefd1b56933df82aa291ad887
         imagePullPolicy: Always
         securityContext:
           runAsNonRoot: true

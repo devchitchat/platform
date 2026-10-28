@@ -41,7 +41,7 @@ spec:
         - name: mesh
           # mesh daemon with CI enabled + bun + docker CLI
           # Built from infra/cicd/mesh-ci-runner/Dockerfile
-          image: registry.local:5000/mesh-ci-runner:latest@sha256:47f0be45192fc9304eec2df7964f3617e23c371211c2894e5a6b883b69ed9d2b
+          image: registry.local:5000/mesh-ci-runner:latest@sha256:accbcfd79eb09f47968bef7d985b7f860aeb8f1181b1e49bcab5a4f59ddfc52e
           imagePullPolicy: Always
           securityContext:
             runAsNonRoot: true
