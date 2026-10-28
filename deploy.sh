@@ -22,6 +22,7 @@
 #   buildkitd        infra/ci-runner/buildkitd.yaml (RBAC, cert-gen Job, Deployment, Service, NetworkPolicy)
 #   ci-runner        infra/ci-runner/deployment.yaml + service.yaml
 #   apps-controller  infra/apps-controller/deployment.yaml
+#   cloudflared      infra/cloudflared/deployment.yaml
 #   social-gate      apps/social-gate/deployment.yaml
 #   agent            apps/agent/deployment.yaml
 set -euo pipefail
@@ -72,6 +73,10 @@ _component_apps_controller() {
   _apply infra/apps-controller/deployment.yaml
 }
 
+_component_cloudflared() {
+  _apply infra/cloudflared/deployment.yaml
+}
+
 _component_social_gate() {
   _apply apps/social-gate/deployment.yaml
 }
@@ -111,7 +116,7 @@ if [ -n "${COMPONENT}" ]; then
     echo ""
     echo "Known components:"
     echo "  namespaces  crds  rbac  registry  buildkitd  ci-runner"
-    echo "  apps-controller  social-gate  agent"
+    echo "  apps-controller  cloudflared  social-gate  agent"
     exit 1
   fi
   "${FN}"
@@ -128,6 +133,7 @@ else
   _component_buildkitd
   _component_ci_runner
   _component_apps_controller
+  _component_cloudflared
   _component_social_gate
   _component_agent
   echo ""

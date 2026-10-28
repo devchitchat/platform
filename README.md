@@ -34,6 +34,10 @@ infra/
     deployment.yaml         CI runner pod: mesh + registry-proxy + registry-proxy-watchdog + buildkitd
     secret-template.yaml    instructions for creating registry-proxy-control-token (not committed)
 
+  cloudflared/
+    deployment.yaml         Cloudflare Tunnel daemon (2 replicas)
+    secret-template.yaml    instructions for creating cloudflared-token (not committed)
+
   mesh-gitops-controller/
     rbac.yaml               ClusterRole + ClusterRoleBinding (broad — manages CRDs, namespaces, RBAC)
     deployment.yaml         controller pod: mesh-gitops-controller + mesh sidecar
@@ -75,7 +79,12 @@ bootstrap-mesh.sh (one-time, run from local-k8s)
 
 ## Secrets
 
-Secrets are never committed. The only secret this repo depends on is `registry-proxy-control-token` in the `ci` namespace. See `infra/ci-runner/secret-template.yaml` for how to create it.
+Secrets are never committed. See the relevant `secret-template.yaml` for how to create each one:
+
+| Secret | Namespace | Template |
+|---|---|---|
+| `registry-proxy-control-token` | `ci` | `infra/ci-runner/secret-template.yaml` |
+| `cloudflared-token` | `default` | `infra/cloudflared/secret-template.yaml` |
 
 ## Related repos
 
